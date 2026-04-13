@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pagament - Botiga Online</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .checkout-container {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 450px;
+        }
+        h1 { font-size: 24px; margin-bottom: 8px; color: #1a1a1a; }
+        .amount { font-size: 36px; font-weight: 700; color: #635bff; margin-bottom: 24px; }
+        label { display: block; font-size: 14px; font-weight: 500; color: #555; margin-bottom: 6px; }
+        input[type="email"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        input[type="email"]:focus { outline: none; border-color: #635bff; box-shadow: 0 0 0 2px rgba(99,91,255,0.2); }
+        #payment-element { margin-bottom: 24px; }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: #635bff;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background: #5147e5; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+        #message {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: none;
+        }
+        #message.error { display: block; background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        #message.success { display: block; background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+        .spinner { display: none; }
+        .spinner.active { display: inline-block; }
+    </style>
+</head>
+<body>
+    <div class="checkout-container">
+        <h1>Completar pagament</h1>
+        <p class="amount">{{ amount|number_format(2, ',', '.') }} &euro;</p>
+
+        <form id="payment-form">
+            <label for="email">Correu electr&ograve;nic</label>
+            <input type="email" id="email" name="email" placeholder="el-teu@email.com" required>
+
+            <label>Dades de la targeta</label>
+            <div id="payment-element"></div>
+
+            <button type="submit" id="submit-btn">
+                <span id="btn-text">Pagar {{ amount|number_format(2, ',', '.') }} &euro;</span>
+                <span id="btn-spinner" class="spinner">Processant...</span>
+            </button>
+        </form>
+
+        <div id="message"></div>
+    </div>
+
+    <script>
+        const stripe = Stripe('{{ stripe_public_key }}');
+        let elements;
+        let clientSecret;
+
+        const form = document.getElementById('payment-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+        const messageEl = document.getElementById('message');
+
+        function showMessage(text, type) {
+            messageEl.textContent = text;
+            messageEl.className = type;
+        }
+
+        function setLoading(loading) {
+            submitBtn.disabled = loading;
+            btnText.style.display = loading ? 'none' : 'inline';
+            btnSpinner.className = loading ? 'spinner active' : 'spinner';
+        }
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            setLoading(true);
+
+            const email = document.getElementById('email').value;
+
+            try {
+                // 1. Create PaymentIntent on the server
+                const response = await fetch('/payment/create-intent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email }),
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                    setLoading(false);
+                    return;
+                }
+
+                clientSecret = data.client_secret;
+
+                // 2. Mount Stripe Elements if not already mounted
+                if (!elements) {
+                    elements = stripe.elements({ clientSecret: clientSecret });
+                    const paymentElement = elements.create('payment');
+                    paymentElement.mount('#payment-element');
+
+                    // Show the submit button only after elements are ready
+                    setLoading(false);
+                    showMessage('Introdueix les dades de la targeta i torna a clicar "Pagar".', 'success');
+                    return;
+                }
+
+                // 3. Confirm payment
+                const { error } = await stripe.confirmPayment({
+                    elements,
+                    confirmParams: {
+                        return_url: window.location.origin + '/payment?status=success',
+                    },
+                });
+
+                if (error) {
+                    showMessage(error.message, 'error');
+                }
+            } catch (err) {
+                showMessage('Error de connexió amb el servidor.', 'error');
+            }
+
+            setLoading(false);
+        });
+
+        // Check if returning from Stripe redirect
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('status') === 'success' || urlParams.get('redirect_status') === 'succeeded') {
+            showMessage('Pagament completat amb èxit! Rebràs un correu de confirmació.', 'success');
+        }
+    </script>
+</body>
+</html>
